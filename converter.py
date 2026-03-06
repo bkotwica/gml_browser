@@ -15,6 +15,7 @@ import re
 from typing import Optional, List, Tuple, Dict
 from xml.etree import ElementTree as ET
 from pathlib import Path
+from pyproj import Transformer
 
 
 # Namespace definitions for RCN GML files
@@ -24,12 +25,27 @@ NAMESPACES = {
     "xlink": "http://www.w3.org/1999/xlink",
 }
 
+# EPSG:2178 (CS2000) to WGS84 transformer
+_TRANSFORMER = Transformer.from_crs("EPSG:2178", "EPSG:4326", always_xy=True)
+
+
+def convert_epsg_2178_to_wgs84(x: float, y: float) -> Tuple[float, float]:
+    """Convert EPSG:2178 coordinates to WGS84 (lon, lat).
+    
+    EPSG:2178 uses (northing, easting) axis order, so we swap inputs.
+    """
+    return _TRANSFORMER.transform(y, x)
+
+
+def convert_polygon(coords: List[Tuple[float, float]]) -> List[List[float]]:
+    """Convert list of (x, y) EPSG:2178 coords to [[lon, lat], ...] for GeoJSON."""
+    return [list(convert_epsg_2178_to_wgs84(x, y)) for x, y in coords]
+
 
 def parse_transaction_date(wersja_id: str) -> Optional[str]:
     """Extract date from wersjaId field (format: YYYY-MM-DD or YYYY-MM-DDTHH-MM-SS)."""
     if not wersja_id:
         return None
-    # Match YYYY-MM-DD pattern
     match = re.search(r"(\d{4}-\d{2}-\d{2})", wersja_id)
     return match.group(1) if match else None
 
@@ -101,7 +117,7 @@ def extract_parcel(elem: ET.Element) -> Optional[dict]:
     data = {
         "id": parcel_id,
         "parcel_number": None,
-        "geometry": None,  # List of (x, y) coordinate tuples
+        "geometry": None,
         "area": None,
     }
 
@@ -125,14 +141,12 @@ def extract_parcel(elem: ET.Element) -> Optional[dict]:
 
 def extract_geometry(geom_elem: ET.Element) -> Optional[List[Tuple[float, float]]]:
     """Extract coordinates from gml:Polygon geometry element."""
-    # Find gml:posList within the geometry
     for polygon in geom_elem:
         tag = polygon.tag
         if "}" in tag:
             tag = tag.split("}")[1]
 
         if tag == "Polygon":
-            # Look for posList in exterior -> LinearRing -> posList
             for exterior in polygon:
                 ext_tag = exterior.tag
                 if "}" in ext_tag:
@@ -187,12 +201,9 @@ def stream_gml(filepath: str, mode: str = "both"):
     Yields:
         Tuple of (type, data) where type is 'transaction' or 'parcel'
     """
-    # Use iterparse for streaming - processes element by element
-    # events='end' means we process after the element is complete
     context = ET.iterparse(filepath, events=("end",))
 
     for event, elem in context:
-        # Get the tag without namespace
         tag = elem.tag
         if "}" in tag:
             tag = tag.split("}")[1]
@@ -201,14 +212,12 @@ def stream_gml(filepath: str, mode: str = "both"):
             data = extract_transaction(elem)
             if data:
                 yield ("transaction", data)
-            # Clear element to free memory
             elem.clear()
 
         elif tag == "RCN_Dzialka" and mode in ("parcels", "both"):
             data = extract_parcel(elem)
             if data:
                 yield ("parcel", data)
-            # Clear element to free memory
             elem.clear()
 
 
@@ -218,8 +227,6 @@ def load_gml(filepath: str) -> Tuple[dict, dict]:
 
     Returns:
         (transactions, parcels) dictionaries
-        - transactions: {id: {transaction_data}}
-        - parcels: {id: {parcel_data}}
     """
     transactions = {}
     parcels = {}
@@ -234,14 +241,7 @@ def load_gml(filepath: str) -> Tuple[dict, dict]:
 
 
 def join_data(transactions: dict, parcels: dict) -> dict:
-    """
-    Join transactions to parcels and return combined data structure.
-
-    The join key is: transaction['parcel_ref'] == parcel['id']
-
-    Returns:
-        Dictionary keyed by parcel_id with transaction and geometry data
-    """
+    """Join transactions to parcels and return combined data structure."""
     result = {}
 
     for trans_id, trans_data in transactions.items():
@@ -249,12 +249,10 @@ def join_data(transactions: dict, parcels: dict) -> dict:
         if not parcel_ref:
             continue
 
-        # Look up parcel by reference
         parcel_data = parcels.get(parcel_ref)
         if not parcel_data:
             continue
 
-        # Build combined record
         if parcel_ref not in result:
             result[parcel_ref] = {
                 "parcel_id": parcel_ref,
@@ -264,7 +262,6 @@ def join_data(transactions: dict, parcels: dict) -> dict:
                 "transactions": [],
             }
 
-        # Add transaction info
         result[parcel_ref]["transactions"].append(
             {
                 "transaction_id": trans_id,
@@ -277,7 +274,9 @@ def join_data(transactions: dict, parcels: dict) -> dict:
     return result
 
 
-def print_sample(transactions: dict, parcels: dict, n: int = 10):
+def print_sample(
+    transactions: dict, parcels: dict, n: int = 10, convert_coords: bool = False
+):
     """Print sample of parsed data for verification."""
     print(f"=== Sample of {n} Transactions ===")
 
@@ -298,9 +297,15 @@ def print_sample(transactions: dict, parcels: dict, n: int = 10):
         print(f"  Area: {data.get('area')} m²")
         geom = data.get("geometry")
         if geom:
-            print(f"  Geometry: {len(geom)} points")
-            print(f"    First point: {geom[0] if geom else 'N/A'}")
-            print(f"    Last point: {geom[-1] if geom else 'N/A'}")
+            if convert_coords:
+                wgs84 = convert_polygon(geom)
+                print(f"  Geometry (WGS84): {len(wgs84)} points")
+                print(f"    First: {wgs84[0]}")
+                print(f"    Last: {wgs84[-1]}")
+            else:
+                print(f"  Geometry (EPSG:2178): {len(geom)} points")
+                print(f"    First: {geom[0]}")
+                print(f"    Last: {geom[-1]}")
         print()
 
 
@@ -321,15 +326,16 @@ def main():
     parser.add_argument(
         "--joined", action="store_true", help="Output joined transaction-parcel data"
     )
+    parser.add_argument(
+        "--wgs84", action="store_true", help="Convert coordinates to WGS84 in output"
+    )
 
     args = parser.parse_args()
 
-    # Check file exists
     if not Path(args.gml_file).exists():
         print(f"Error: File not found: {args.gml_file}", file=sys.stderr)
         sys.exit(1)
 
-    # Determine mode
     if args.transactions_only:
         mode = "transactions"
     elif args.parcels_only:
@@ -339,7 +345,6 @@ def main():
 
     print(f"Parsing {args.gml_file} (mode: {mode})...", file=sys.stderr)
 
-    # Parse file
     transactions, parcels = load_gml(args.gml_file)
 
     print(
@@ -347,16 +352,13 @@ def main():
         file=sys.stderr,
     )
 
-    # Handle sample mode
     if args.sample > 0:
-        print_sample(transactions, parcels, args.sample)
+        print_sample(transactions, parcels, args.sample, convert_coords=args.wgs84)
         return
 
-    # Handle joined mode
     if args.joined:
         joined = join_data(transactions, parcels)
         print(f"Joined {len(joined)} parcel-transaction pairs", file=sys.stderr)
-        # Print first few joined records as sample
         for i, (parcel_id, data) in enumerate(joined.items()):
             if i >= 5:
                 break
@@ -364,13 +366,14 @@ def main():
             print(f"Parcel ID: {parcel_id}")
             print(f"Parcel #: {data.get('parcel_number')}")
             print(f"Area: {data.get('area')} m²")
+            if args.wgs84 and data.get("geometry"):
+                wgs = convert_polygon(data["geometry"])
+                print(f"Geometry (WGS84): {wgs[:2]}...")
             print(f"Transactions: {len(data.get('transactions', []))}")
             for j, trans in enumerate(data.get("transactions", [])[:3]):
                 print(f"  [{j + 1}] {trans.get('date')} - {trans.get('price')} PLN")
         return
 
-    # Default: return data structures
-    # In a real usage, you'd import and use the functions
     print("Data loaded. Use --sample N, --joined, or import as module.")
 
 
