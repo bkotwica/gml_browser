@@ -846,109 +846,57 @@
         }
         
         function convertPoint2178ToWGS84(x, y) {
-            // EPSG:2178 is Poland CS2000 / Poland CS92
-            // Central meridian is 19°E
-            // False easting is 500000m
-            
-            // Using pyproj's transformation as reference:
-            // For x=5824182.68, y=7416163.09
-            // Expected: lon ~19.25, lat ~52.1 (central Poland)
-            
-            // Simplified conversion using projection parameters
-            // lat_0 = 0, lon_0 = 19, k = 0.9993, x_0 = 500000, y_0 = 0
-            
-            const lat0 = 0;
-            const lon0 = 19;
-            const k = 0.9993;
-            const x0 = 500000;
-            
-            // Calculate latitude and longitude
-            // These formulas are approximations but work reasonably well for display
-            
-            // Convert to relative coordinates
-            const dx = (x - x0) / 100000;
-            const dy = y / 1000000;
-            
-            // Approximate conversion
-            // The longitude is approximately: lon0 + dx / k
-            // The latitude requires more complex calculation
-            
-            // More accurate approximation based on Poland CS2000
-            const lon = lon0 + (x - x0) * 0.000036;  // ~0.036 mm per meter
-            const lat = 0.0000158 * y - 0.33333;    // Linear approximation
-            
-            // Better approximation using iterative method or look-up
-            // For display purposes, this is acceptable
-            // Central Poland: 19.0-19.5°E, 51.5-52.5°N
-            
-            // Using the fact that Poland's center is roughly at:
-            // x = 5500000 (lon ~19°), y = 5200000 (lat ~52°)
-            
-            const lonApprox = 19 + (x - 5500000) / 1000000;
-            const latApprox = 52 + (y - 5200000) / 1000000;
-            
-            // Since y values are around 7.4 million, this suggests
-            // a different coordinate reference. Let's check:
-            // The values 5824182, 7416163 look like they're in EPSG:2178
-            // but with a different interpretation
-            
-            // EPSG:2178 uses:
-            // GRS80 ellipsoid
-            // Transverse Mercator
+            // EPSG:2178 (Poland CS2000) to WGS84
+            // Using transverse mercator inverse
             // Central meridian: 19°E
-            // Scale factor: 0.9993
             // False easting: 500000m
             // False northing: 0m
+            // Scale factor: 0.9993
             
-            // Using the actual coordinate values:
-            // x = 5824182.68, y = 7416163.09
-            // This is NOT standard EPSG:2178 (which would have y < 7 million)
-            // This might be EPSG:2180 (Poland CS2000 zone 8)
-            // or a different reference system
+            const a = 6378137.0;        // Semi-major axis (WGS84)
+            const f = 1 / 298.257223563; // Flattening (WGS84)
+            const k0 = 0.9993;           // Scale factor
+            const lon0 = 19 * Math.PI / 180;  // Central meridian in radians
+            const x0 = 500000;           // False easting
+            const y0 = 0;                // False northing
             
-            // Let's try the most common Polish system - EPSG:2180
-            // Or possibly EPSG:2178 with different axis order
+            // Normalized coordinates
+            const xn = (x - x0) / (a * k0);
+            const yn = (y - y0) / (a * k0);
             
-            // Actually, looking at the coordinates more carefully:
-            // These are definitely in a Polish coordinate system
-            // The conversion below is tuned for typical Polish data
+            // Iterative solution for latitude
+            let B = yn;
+            for (let i = 0; i < 5; i++) {
+                const sinB = Math.sin(B);
+                const cosB = Math.cos(B);
+                const sin2B = sinB * sinB;
+                const eta2 = 0.006739496775 * cosB * cosB;
+                const N = a / Math.sqrt(1 - 0.006694380023 * sin2B);
+                
+                B = yn + (N * sinB * cosB * eta2) / 2 - 
+                    (N * sinB * cosB * cosB * (5 - 9 * eta2 + eta2 * eta2)) / 6;
+            }
             
-            // For EPSG:2180 (Poland CS2000 zone 8):
-            // lon = 19 + (x - 500000) / 83334.5
-            // lat = complex formula
-            
-            // Simplified but working conversion:
-            const lonFinal = 19.0 + (x - 5824182.68) / 1000000 + 0.1;
-            const latFinal = 52.0 + (y - 7416163.09) / 1200000 + 0.5;
-            
-            // Actually, the proper formula for EPSG:2178 is:
-            // Using standard transverse mercator inverse
-            
-            // Let's use a practical approximation based on typical Polish coordinates
-            // in EPSG:2178 system:
-            
-            // Calculate B, l for Poland CS2000
-            const B = y / 6367449.145823;
-            const l = (x - 500000) / 6399596.651988;
-            
-            // Simplified (accuracy ~100m)
+            // Calculate latitude and longitude
             const sinB = Math.sin(B);
             const cosB = Math.cos(B);
-            const tanB = Math.sin(B) / Math.cos(B);
-            
-            const eta2 = 0.006739496775 * cosB * cosB;
-            const N = 6399596.625 / Math.sqrt(1 - 0.006694380023 * sinB * sinB);
+            const tanB = sinB / cosB;
+            const sin2B = sinB * sinB;
+            const cos2B = cosB * cosB;
+            const eta2 = 0.006739496775 * cos2B;
+            const N = a / Math.sqrt(1 - 0.006694380023 * sin2B);
             
             // Latitude
-            const latRad = B - (l * l * sinB * cosB * (1 + eta2)) / 2 +
-                          (l * l * l * l * sinB * cosB * cosB * cosB * (5 - tanB * tanB + 9 * eta2)) / 24;
+            const latRad = B - (tanB * cos2B * eta2) / 2 +
+                          (tanB * cos2B * cos2B * (5 - 9 * eta2 + eta2 * eta2)) / 24;
             
             // Longitude
-            const lonRad = l + (l * l * l * cosB * cosB * (1 - tanB * tanB + eta2)) / 6 +
-                          (l * l * l * l * l * cosB * cosB * cosB * cosB * (5 - 18 * tanB * tanB + tanB * tanB * tanB * tanB)) / 120;
+            const lonRad = xn / cosB - 
+                          (cos2B * (1 - tanB * tanB + eta2)) * xn * xn * xn / 6 +
+                          (cos2B * cos2B * (5 - 18 * tanB * tanB + tanB * tanB * tanB * tanB)) * Math.pow(xn, 5) / 120;
             
             const lat = latRad * 180 / Math.PI;
-            const lon = lon0 + (lonRad * 180 / Math.PI);
+            const lon = lon0 * 180 / Math.PI + lonRad * 180 / Math.PI;
             
             return [lon, lat];
         }
