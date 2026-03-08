@@ -10,6 +10,7 @@ Usage:
 """
 
 import argparse
+import json
 import sys
 import re
 from typing import Optional, List, Tuple, Dict
@@ -274,6 +275,51 @@ def join_data(transactions: dict, parcels: dict) -> dict:
     return result
 
 
+def to_geojson(all_parcels: dict) -> dict:
+    """Convert all parcels to GeoJSON FeatureCollection.
+    
+    Args:
+        all_parcels: Dictionary of all parcels (from load_gml or join_data)
+    """
+    features = []
+    for parcel_id, data in all_parcels.items():
+        # Skip features without geometry
+        geometry = data.get("geometry")
+        if not geometry:
+            continue
+        
+        # Get transactions for this parcel (may be empty list)
+        transactions = data.get("transactions", [])
+        # Use first transaction if available, otherwise None
+        trans = transactions[0] if transactions else None
+        # Convert coordinates to WGS84
+        wgs84_coords = convert_polygon(geometry)
+        # Build properties - include transaction data if available
+        properties = {
+            "price": trans.get("price") if trans else None,
+            "date": trans.get("date") if trans else None,
+            "type": trans.get("type") if trans else None,
+            "area": data.get("area"),
+            "parcel_number": data.get("parcel_number"),
+            "transactions_count": len(transactions),
+        }
+        feature = {
+            "id": parcel_id,
+            "properties": properties,
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [wgs84_coords],
+            },
+        }
+        features.append(feature)
+    
+    return {
+        "type": "FeatureCollection",
+        "features": features,
+    }
+
+
+
 def print_sample(
     transactions: dict, parcels: dict, n: int = 10, convert_coords: bool = False
 ):
@@ -329,6 +375,12 @@ def main():
     parser.add_argument(
         "--wgs84", action="store_true", help="Convert coordinates to WGS84 in output"
     )
+    parser.add_argument(
+        "--json", action="store_true", help="Output GeoJSON to stdout"
+    )
+    parser.add_argument(
+        "--output", type=str, help="Save output to file (use with --json)"
+    )
 
     args = parser.parse_args()
 
@@ -373,6 +425,33 @@ def main():
             for j, trans in enumerate(data.get("transactions", [])[:3]):
                 print(f"  [{j + 1}] {trans.get('date')} - {trans.get('price')} PLN")
         return
+
+    if args.json:
+        # Get joined data (parcels with transactions)
+        joined = join_data(transactions, parcels)
+        # Merge all parcels with their transactions (if any)
+        all_parcels_for_geojson = {}
+        for parcel_id, parcel_data in parcels.items():
+            all_parcels_for_geojson[parcel_id] = {
+                "id": parcel_id,
+                "parcel_number": parcel_data.get("parcel_number"),
+                "area": parcel_data.get("area"),
+                "geometry": parcel_data.get("geometry"),
+                "transactions": joined.get(parcel_id, {}).get("transactions", []),
+            }
+        
+        geojson = to_geojson(all_parcels_for_geojson)
+        output_json = json.dumps(geojson, indent=2)
+        if args.output:
+            output_path = Path(args.output)
+            # Create parent directory if needed
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(output_json)
+            print(f"GeoJSON saved to {args.output}", file=sys.stderr)
+        else:
+            print(output_json)
+        return
+
 
     print("Data loaded. Use --sample N, --joined, or import as module.")
 

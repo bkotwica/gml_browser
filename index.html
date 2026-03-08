@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RCN GML Browser</title>
+    
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" 
+          integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" 
+          crossorigin=""/>
+    
+    <!-- PyScript CSS -->
+    <link rel="stylesheet" href="https://pyscript.net/releases/2024.1.1/core.css"/>
+    
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+        }
+        
+        #sidebar {
+            width: 320px;
+            background: #1a1a2e;
+            color: #eee;
+            padding: 20px;
+            overflow-y: auto;
+            flex-shrink: 0;
+        }
+        
+        #sidebar h1 {
+            font-size: 1.4rem;
+            margin-bottom: 20px;
+            color: #00d4aa;
+        }
+        
+        #sidebar .info {
+            font-size: 0.85rem;
+            color: #888;
+            margin-bottom: 20px;
+        }
+        
+        #map {
+            flex: 1;
+            height: 100vh;
+        }
+        
+        /* PyScript loading indicator styling */
+        py-script, script[type="py"] {
+            display: none;
+        }
+        
+        /* Filter section */
+        .filter-section {
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 1px solid #333;
+        }
+        
+        .filter-section h2 {
+            font-size: 1rem;
+            margin-bottom: 15px;
+            color: #00d4aa;
+        }
+        
+        .filter-group {
+            margin-bottom: 12px;
+        }
+        
+        .filter-group label {
+            display: block;
+            font-size: 0.8rem;
+            color: #888;
+            margin-bottom: 5px;
+        }
+        
+        .filter-group input {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid #333;
+            border-radius: 6px;
+            background: #252540;
+            color: #eee;
+            font-size: 0.9rem;
+        }
+        
+        .filter-group input:focus {
+            outline: none;
+            border-color: #00d4aa;
+        }
+        
+        .filter-group input::placeholder {
+            color: #555;
+        }
+        
+        .filter-btn {
+            width: 100%;
+            padding: 10px;
+            background: #00d4aa;
+            color: #1a1a2e;
+            border: none;
+            border-radius: 6px;
+            font-size: 0.95rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        
+        .filter-btn:hover {
+            background: #00e6b8;
+        }
+        
+        .filter-count {
+            margin-top: 12px;
+            font-size: 0.85rem;
+            color: #888;
+            text-align: center;
+        }
+        
+        .filter-count span {
+            color: #00d4aa;
+            font-weight: 600;
+        }
+        
+        /* Details section */
+        .details-section {
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 1px solid #333;
+        }
+        
+        .details-section h2 {
+            font-size: 1rem;
+            margin-bottom: 15px;
+            color: #00d4aa;
+        }
+        
+        .details-content {
+            background: #252540;
+            border-radius: 8px;
+            padding: 15px;
+        }
+        
+        .details-content.empty {
+            color: #555;
+            font-size: 0.9rem;
+            text-align: center;
+            padding: 30px 15px;
+        }
+        
+        .detail-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid #333;
+        }
+        
+        .detail-row:last-child {
+            border-bottom: none;
+        }
+        
+        .detail-label {
+            color: #888;
+            font-size: 0.85rem;
+        }
+        
+        .detail-value {
+            color: #eee;
+            font-size: 0.85rem;
+            font-weight: 500;
+        }
+        
+        .detail-value.price {
+            color: #22c55e;
+        }
+        
+        /* CSV Export button */
+        .export-btn {
+            width: 100%;
+            padding: 10px;
+            background: #3b82f6;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 0.95rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+            margin-top: 15px;
+        }
+        
+        .export-btn:hover {
+            background: #2563eb;
+        }
+    </style>
+</head>
+<body>
+    <aside id="sidebar">
+        <h1>RCN GML Browser</h1>
+        <p class="info">Polish land parcel transactions</p>
+        <div class="filter-section">
+            <h2>Filtry</h2>
+            <div class="filter-group">
+                <label for="price_min">Cena od</label>
+                <input type="number" id="price_min" placeholder="Cena od">
+            </div>
+            <div class="filter-group">
+                <label for="price_max">Cena do</label>
+                <input type="number" id="price_max" placeholder="Cena do">
+            </div>
+            <div class="filter-group">
+                <label for="date_from">Data od</label>
+                <input type="date" id="date_from">
+            </div>
+            <div class="filter-group">
+                <label for="date_to">Data do</label>
+                <input type="date" id="date_to">
+            <button class="filter-btn" id="filter_btn">Filtruj</button>
+            <p class="filter-count">Widoczne: <span id="filter_count">0/0</span></p>
+            <button class="export-btn" id="export_btn">Eksport CSV</button>
+        </div>
+        
+        <div class="details-section">
+            <h2>Szczegóły</h2>
+            <div class="details-content empty" id="details_content">
+                Kliknij na działkę, aby zobaczyć szczegóły
+            </div>
+        </div>
+    </aside>
+    
+    <div id="map"></div>
+    
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" 
+            integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" 
+            crossorigin=""></script>
+    
+    <!-- PyScript -->
+    <script type="module" src="https://pyscript.net/releases/2024.1.1/core.js"></script>
+    
+    <script>
+        // Global variables
+        let allFeatures = [];
+        let parcelsLayer = null;
+        
+        // Initialize Leaflet map centered on Poland
+        const map = L.map('map').setView([52, 19], 7);
+        
+        // Add OpenStreetMap tiles
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+            maxZoom: 19
+        }).addTo(map);
+        
+        // Load GeoJSON parcels and display on map
+        fetch('data/transactions.json')
+            .then(response => response.json())
+            .then(geojson => {
+                // Limit to first 100 features to avoid browser crash
+                let limitedFeatures = geojson.features.slice(0, 100);
+                
+                // Store all limited features for filtering
+                allFeatures = limitedFeatures.map(f => {
+                    if (!f.type) {
+                        f.type = 'Feature';
+                    }
+                    return f;
+                });
+                
+                // Style function: green if has price, gray if no price
+                function style(feature) {
+                    const hasPrice = feature.properties && feature.properties.price !== null && feature.properties.price > 0;
+                    return {
+                        fillColor: hasPrice ? '#22c55e' : '#6b7280',
+                        fillOpacity: 0.5,
+                        color: hasPrice ? '#16a34a' : '#4b5563',
+                        weight: 1
+                    };
+                }
+                
+                // Create and add GeoJSON layer
+                parcelsLayer = L.geoJSON(allFeatures, {
+                    style: style,
+                    onEachFeature: function(feature, layer) {
+                        if (feature.properties && feature.properties.parcel_number) {
+                            const popupText = `Parcel: ${feature.properties.parcel_number}`;
+                            layer.bindPopup(popupText);
+                        }
+                        // Add click handler for details panel
+                        layer.on('click', showDetails);
+                    }
+                }).addTo(map);
+                
+                // Fit map to parcel bounds
+                map.fitBounds(parcelsLayer.getBounds());
+                
+                // Update filter count after initial load
+                updateFilterCount();
+            })
+            .catch(error => console.error('Error loading GeoJSON:', error));
+        
+        // Filter function
+        function filterFeatures() {
+            const priceMin = document.getElementById('price_min').value;
+            const priceMax = document.getElementById('price_max').value;
+            const dateFrom = document.getElementById('date_from').value;
+            const dateTo = document.getElementById('date_to').value;
+            
+            const filtered = allFeatures.filter(feature => {
+                const props = feature.properties || {};
+                const price = props.price;
+                const date = props.date;
+                
+                // Price filter
+                if (priceMin && price !== null && price < parseFloat(priceMin)) {
+                    return false;
+                }
+                if (priceMax && price !== null && price > parseFloat(priceMax)) {
+                    return false;
+                }
+                
+                // Date filter
+                if (dateFrom && date) {
+                    const featureDate = new Date(date);
+                    const fromDate = new Date(dateFrom);
+                    if (featureDate < fromDate) {
+                        return false;
+                    }
+                }
+                if (dateTo && date) {
+                    const featureDate = new Date(date);
+                    const toDate = new Date(dateTo);
+                    if (featureDate > toDate) {
+                        return false;
+                    }
+                }
+                
+                return true;
+            });
+            
+            // Clear and re-add layer with filtered features
+            parcelsLayer.clearLayers();
+            parcelsLayer.addData(filtered);
+            
+            // Update count
+            document.getElementById('filter_count').textContent = `${filtered.length}/${allFeatures.length}`;
+        }
+        
+        function updateFilterCount() {
+            document.getElementById('filter_count').textContent = `${allFeatures.length}/${allFeatures.length}`;
+        }
+        
+        // Show parcel details in sidebar
+        function showDetails(event) {
+            const feature = event.target.feature;
+            const props = feature.properties || {};
+            
+            const detailsContent = document.getElementById('details_content');
+            detailsContent.classList.remove('empty');
+            
+            // Build details HTML
+            const html = [
+                '<div class="detail-row">',
+                    '<span class="detail-label">Numer działki</span>',
+                    '<span class="detail-value">' + (props.parcel_number || '-') + '</span>',
+                '</div>',
+                '<div class="detail-row">',
+                    '<span class="detail-label">Cena</span>',
+                    '<span class="detail-value price">' + (props.price ? props.price.toLocaleString() + ' zł' : '-') + '</span>',
+                '</div>',
+                '<div class="detail-row">',
+                    '<span class="detail-label">Data</span>',
+                    '<span class="detail-value">' + (props.date || '-') + '</span>',
+                '</div>',
+                '<div class="detail-row">',
+                    '<span class="detail-label">Typ</span>',
+                    '<span class="detail-value">' + (props.type || '-') + '</span>',
+                '</div>',
+                '<div class="detail-row">',
+                    '<span class="detail-label">Powierzchnia</span>',
+                    '<span class="detail-value">' + (props.area ? props.area + ' m²' : '-') + '</span>',
+                '</div>'
+            ].join('');
+            
+            detailsContent.innerHTML = html;
+        }
+        
+        // Export filtered data to CSV
+        function exportCSV() {
+            // Get currently displayed features from the layer
+            const visibleFeatures = [];
+            parcelsLayer.eachLayer(function(layer) {
+                if (layer.feature) {
+                    visibleFeatures.push(layer.feature);
+                }
+            });
+            
+            if (visibleFeatures.length === 0) {
+                alert('Brak danych do eksportu');
+                return;
+            }
+            
+            // CSV header
+            const headers = ['id', 'parcel_number', 'price', 'date', 'type', 'area'];
+            const csvRows = [headers.join(',')];
+            
+            // Add data rows
+            visibleFeatures.forEach((feature, index) => {
+                const props = feature.properties || {};
+                const row = [
+                    index + 1,
+                    '"' + (props.parcel_number || '') + '"',
+                    props.price || '',
+                    '"' + (props.date || '') + '"',
+                    '"' + (props.type || '') + '"',
+                    props.area || ''
+                ];
+                csvRows.push(row.join(','));
+            });
+            
+            // Trigger download
+            const csvContent = 'data:text/csv;charset=utf-8,' + csvRows.join('\n');
+            const encodedUri = encodeURI(csvContent);
+            const link = document.createElement('a');
+            link.setAttribute('href', encodedUri);
+            link.setAttribute('download', 'parcels.csv');
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+        
+        // Event listener for CSV export button
+        document.getElementById('export_btn').addEventListener('click', exportCSV);
+        
+        // Event listener for filter button
+        document.getElementById('filter_btn').addEventListener('click', filterFeatures);
+    </script>
+    
+    <!-- PyScript placeholder for future Python code -->
+    <script type="py">
+        print("PyScript initialized")
+    </script>
+</body>
+</html>
